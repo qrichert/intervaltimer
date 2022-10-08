@@ -4,9 +4,7 @@ from typing import Callable
 
 
 class IntervalTimer:
-    """
-    Run callback at given interval, accounting for drift.
-    """
+    """Run callback at given interval, accounting for drift."""
 
     def __init__(self, interval: float, callback: Callable) -> None:
         """
@@ -16,64 +14,50 @@ class IntervalTimer:
         self.interval: float = interval
         self.callback: Callable = callback
 
-        #: Run timer thread as daemon? (must be set before ``start()``).
-        self.daemon = False
-        #: Used for requesting timer to stop.
+        self._start_time: float | None = None
         self._exit_flag: Event = Event()
-        #: Timestamp of current timer start (or ``None`` if not running).
-        self.start_time: float | None = None
 
     @property
     def is_running(self) -> bool:
-        """
-        Whether the timer is currently running or not.
-        """
-        return self.start_time is not None
+        """Return whether the timer is currently running or not."""
+        return self._start_time is not None
 
     def _run(self) -> None:
-        """
-        Main timer loop.
-        """
-        # Setup
-        self.start_time = time.time()
-        # Run
+        self._start_time = time.monotonic()
         while not self._exit_flag.is_set():
             self.callback()
             # Adjust next interval delay to account for drift.
-            drift: float = (time.time() - self.start_time) % self.interval
+            drift: float = (time.monotonic() - self._start_time) % self.interval
             self._exit_flag.wait(self.interval - drift)
-        # Reset
         self._exit_flag.clear()
-        self.start_time = None
+        self._start_time = None
 
-    def start(self) -> None:
-        """
-        Start timer.
-        """
+    def _ensure_is_not_running(self) -> None:
         if self.is_running:
             raise RuntimeError("Timer already started.")
-        thread = Thread(target=self._run)
-        thread.daemon = self.daemon
+
+    def start(self) -> None:
+        """Start timer."""
+        self._ensure_is_not_running()
+        self._run()
+
+    def start_threaded(self, daemon: bool = True) -> None:
+        """Start timer in separate thread."""
+        self._ensure_is_not_running()
+        thread = Thread(target=self._run, daemon=daemon)
         thread.start()
 
     def stop(self) -> None:
-        """
-        Request timer to stop (there may be a slight delay).
-        """
+        """Request timer to stop (there may be a slight delay)."""
         if self.is_running:
             self._exit_flag.set()
 
 
 if __name__ == "__main__":
-
-    def callback():
-        print(time.time())
-
-    timer = IntervalTimer(1, callback)
-    timer.daemon = True
+    timer = IntervalTimer(1, lambda: print(time.time()))
 
     print("Run for 10s...")
-    timer.start()
+    timer.start_threaded()
     time.sleep(10)
     timer.stop()
     print("Done.")
